@@ -33,6 +33,7 @@ add_compile_definitions(
     VERSION=0
     F3DEX_GBI_2
     NDEBUG
+    BUGFIXES       # Fix original game bugs (buffer overflows, etc.) that crash on modern platforms
     _LANGUAGE_C    # Required for N64 GBI/ultratypes headers
     PC_ENHANCEMENTS  # Optional visual improvements (MSAA, etc). Remove to get pure PC port.
 )

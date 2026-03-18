@@ -23,9 +23,16 @@
 #include <PR/ultratypes.h>
 
 #ifdef TARGET_PC
-/* GCC GNU extension: pointer-to-integer cast in static initializers.
-   Safe on 32-bit where sizeof(void*) == sizeof(unsigned int). */
+#include <stdint.h>
+/* GBI command words are 32 bits. On 64-bit, pointer-to-u32 truncation in static
+ * initializers is rejected by both GCC and Clang. Use 0 as placeholder —
+ * emu64's seg2k0 recovers the full pointer at runtime using the executable's
+ * base address (all static Gfx arrays share the same upper 32 bits). */
+#if UINTPTR_MAX > 0xFFFFFFFFu
+#define _GBI_STATIC_PTR(s) 0u
+#else
 #define _GBI_STATIC_PTR(s) (unsigned int)(uintptr_t)(s)
+#endif
 #else
 #define _GBI_STATIC_PTR(s) (unsigned int)(s)
 #endif
@@ -1880,6 +1887,15 @@ typedef union {
         long long int	force_structure_alignment;
 } Gfx;
 
+#ifdef _GBI_NEEDS_FIXUP
+/* Patch a static Gfx command's w1 field with a real pointer at runtime.
+ * Used on 64-bit where _GBI_STATIC_PTR(s) compiles as 0u placeholder. */
+#define GBI_FIXUP_PTR(gfx_array, index, ptr) \
+    do { (gfx_array)[(index)].words.w1 = (unsigned int)(uintptr_t)(ptr); } while(0)
+#else
+#define GBI_FIXUP_PTR(gfx_array, index, ptr) ((void)0)
+#endif
+
 /*
  * Macros to assemble the graphics display list
  */
@@ -3190,7 +3206,7 @@ typedef union {
 {{									\
 	_SHIFTL(cmd, 24, 8) | _SHIFTL(fmt, 21, 3) |			\
 	_SHIFTL(siz, 19, 2) | _SHIFTL((width)-1, 0, 12),		\
-	(unsigned int)(i)						\
+	_GBI_STATIC_PTR(i)						\
 }}
 
 #define	gDPSetColorImage(pkt, f, s, w, i)	gSetImage(pkt, G_SETCIMG, f, s, w, i)

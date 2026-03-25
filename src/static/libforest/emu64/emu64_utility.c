@@ -9,6 +9,10 @@
 extern "C" uintptr_t pc_image_base;
 extern "C" uintptr_t pc_image_end;
 
+/* Arena range from pc_os.c — heap pointers in arena also bypass segment resolution */
+extern "C" unsigned char* pc_arena_base;
+extern "C" unsigned char* pc_arena_end;
+
 #if UINTPTR_MAX > 0xFFFFFFFFu
 #include "pc_gbi_ptr.h"
 
@@ -29,6 +33,13 @@ uintptr_t emu64::seg2k0(uintptr_t segadr) {
 
     /* If the address is within the executable image, it's a native pointer */
     if (segadr >= pc_image_base && segadr < pc_image_end) {
+        return segadr;
+    }
+
+    /* Check if address falls within the main memory arena (JKRHeap, Object_Exchange
+       banks, cloth data, etc.).*/
+    if (pc_arena_base && segadr >= (uintptr_t)pc_arena_base &&
+        segadr < (uintptr_t)pc_arena_end) {
         return segadr;
     }
 
@@ -61,6 +72,8 @@ uintptr_t emu64::seg2k0(uintptr_t segadr) {
  * disambiguate. On other platforms, rely on segment table and image range. */
 
 #ifdef _WIN32
+/* Page-granularity cache for VirtualQuery results.
+ * Avoids repeated syscalls for addresses in the same page. */
 #define SEG2K0_PAGE_CACHE_SIZE 32
 static struct { u32 page; u8 committed; } seg2k0_page_cache[SEG2K0_PAGE_CACHE_SIZE];
 static int seg2k0_cache_next = 0;
@@ -93,6 +106,13 @@ uintptr_t emu64::seg2k0(uintptr_t segadr) {
         return segadr;
     }
 
+    /* Check if address falls within the main memory arena (JKRHeap, Object_Exchange
+       banks, cloth data, etc.).*/
+    if (pc_arena_base && segadr >= (u32)(uintptr_t)pc_arena_base &&
+        segadr < (u32)(uintptr_t)pc_arena_end) {
+        return segadr;
+    }
+
     u32 seg = (segadr >> 24) & 0xF;
     u32 offset = segadr & 0xFFFFFF;
 
@@ -103,7 +123,24 @@ uintptr_t emu64::seg2k0(uintptr_t segadr) {
     uintptr_t resolved = this->segments[seg] + offset;
 
 #ifdef _WIN32
+    /* Real N64 segment addresses come from GBI macros like SEGMENT_ADDR(seg, offset)
+       and always have small offsets (textures, matrices that are never > 512KB).
+       PC heap pointers that collide with the segment range have large "offsets"
+       (the low 24 bits of an arbitrary address). Use this to discriminate:
+       large offset + committed raw address = heap pointer, not segment ref.
+
+       This might be the last memory fix needed.
+       */
+
+    /* Large offset (> 512KB) with committed raw address = definitely a heap pointer,
+       not a real segment reference. N64 segments never have offsets this large. */
+    if (offset > 0x80000 && seg2k0_is_committed(segadr)) {
+        return segadr;
+    }
+
+    /* Normal segment resolution path */
     if (seg2k0_is_committed((u32)resolved)) {
+        /* Segment resolution gave a valid address — use it (normal path) */
         this->resolved_addresses++;
         return resolved;
     }

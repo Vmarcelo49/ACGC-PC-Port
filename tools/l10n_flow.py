@@ -15,6 +15,18 @@ def run(cmd, cwd=None):
     subprocess.run(cmd, cwd=cwd, check=True)
 
 
+def parse_localized_archive_name(arc_path: Path):
+    stem = arc_path.stem
+    if "." not in stem:
+        return stem, None
+
+    base_name, language = stem.rsplit(".", 1)
+    if not base_name or not language:
+        return stem, None
+
+    return base_name, language
+
+
 def find_message_files(unpack_dir: Path):
     data_candidates = sorted(unpack_dir.rglob("message_data.bin"))
 
@@ -132,7 +144,20 @@ def repack_flow(args):
         ]
     )
 
-    out_arc = Path(args.out).resolve() if args.out else source_arc.with_name(f"{source_arc.stem}_l10n.arc")
+    if args.out:
+        out_arc = Path(args.out).resolve()
+    else:
+        base_name, detected_language = parse_localized_archive_name(source_arc)
+        language = args.language or detected_language
+
+        if not language:
+            raise ValueError(
+                "Could not infer language from source archive name. "
+                "Use --language (e.g. pt-BR) or provide --out explicitly."
+            )
+
+        out_arc = root_dir / "translations" / language / f"{base_name}{source_arc.suffix}"
+
     out_arc.parent.mkdir(parents=True, exist_ok=True)
 
     run([sys.executable, str(arc_tool), str(archive_root), str(out_arc)])
@@ -163,7 +188,16 @@ def build_parser():
     repack = subparsers.add_parser("repack", help="Encode messages and repack archive")
     repack.add_argument("--workdir", required=True, help="Working directory created by extract step")
     repack.add_argument("--text", required=False, help="Edited message text file path")
-    repack.add_argument("--out", required=False, help="Output archive path")
+    repack.add_argument(
+        "--out",
+        required=False,
+        help="Output archive path (default: translations/{language}/{base_archive_name}.arc)",
+    )
+    repack.add_argument(
+        "--language",
+        required=False,
+        help="Language tag used for default output path (e.g. pt-BR).",
+    )
     repack.add_argument(
         "--replace-source",
         action="store_true",
